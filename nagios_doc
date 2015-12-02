@@ -1,0 +1,215 @@
+On Nagios Server
+
+1]
+#Installing Dependencies on Nagios server
+
+#For RHEL/CentOS users:
+yum install -y wget httpd php gcc glibc glibc-common gd gd-devel make net-snmp
+#For Ubuntu users:
+
+apt-get install wget build-essential apache2 php5-gd libgd2-xpm libgd2-xpm-dev libapache2-mod-php5
+
+#Download Nagios Core and Nagios Plugins Tarballs
+#For all systems, run the following commands in your terminal:
+#This will download Nagios Core, and it's required plugins.
+cd /tmp
+wget http://prdownloads.sourceforge.net/sourceforge/nagios/nagios-4.0.4.tar.gz
+wget http://nagios-plugins.org/download/nagios-plugins-2.0.tar.gz
+
+
+
+#Adding the Nagios User and Group
+#Next add the appropriate user and group for the Nagios process to run:
+
+useradd nagios
+groupadd nagcmd
+usermod -a -G nagcmd nagios
+
+#uncompress the tarballs
+tar zxvf nagios-4.0.4.tar.gz
+tar zxvf nagios-plugins-2.0.tar.gz
+
+2] 
+#Installing Nagios core on Nagios server
+#Change to the new Nagios directory and install the packages:
+#Installing Nagios-core
+cd nagios-4.0.4
+
+#For RHEL/CentOS users:
+./configure --with-command-group=nagcmd
+
+#For Ubuntu users:
+./configure --with-nagios-group=nagios --with-command-group=nagcmd -–with-mail=/usr/bin/sendmail
+
+All systems:
+make all
+make install
+make install-init
+make install-config
+make install-commandmode
+make install-webconf 
+
+#Note-####################
+# if command "make install-webconf" is not running then run the following command
+/usr/bin/install -c -m 644 sample-config/httpd.conf /etc/apache2/sites-available/nagios.conf
+#######################################
+
+cp -R contrib/eventhandlers/ /usr/local/nagios/libexec/
+chown -R nagios:nagios /usr/local/nagios/libexec/eventhandlers
+/usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg
+/etc/init.d/nagios start
+
+#For RHEL/CentOS users:
+/etc/init.d/httpd start 
+
+#Configure Apache
+
+#Enable the Apache rewrite and cgi modules:
+
+ a2enmod rewrite
+ a2enmod cgi
+
+
+#Create a Default User for Web Access.
+#Add a default user for Web Interface Access:
+#Use htpasswd to create an admin user, called "nagiosadmin", that can access the Nagios web interface:
+htpasswd –c /usr/local/nagios/etc/htpasswd.users nagiosadmin
+#Enter a password at the prompt. Remember this password, as you will need it to access the Nagios web interface.
+
+#Now create a symbolic link of nagios.conf to the sites-enabled directory:
+ ln -s /etc/apache2/sites-available/nagios.conf /etc/apache2/sites-enabled/
+
+Nagios Service Setup
+The following commands will register the Nagios daemon to be run upon system startup.
+chkconfig --add nagios
+chkconfig --level 35 nagios on
+chkconfig --add httpd
+chkconfig --level 35 httpd on
+
+#For Ubuntu:
+ln -s /etc/init.d/nagios /etc/rcS.d/S99nagios
+
+#Nagios is ready to be started. Let's do that, and restart Apache:
+
+ service nagios restart
+ service apache2 restart
+
+Access the Nagios Web Interface http://nagios_server_ip/nagios
+
+3]
+#Installing Nagios Plugin on Nagios Server
+
+cd nagios-plugins-*
+
+#Before building Nagios Plugins, we must configure it. Use this command:
+
+./configure --with-nagios-user=nagios --with-nagios-group=nagios --with-openssl
+
+#Now compile Nagios Plugins with this command:
+
+make
+
+#Then install it with this command:
+
+ make install
+
+4]
+##Install NRPE on nagios server
+
+#Find the source code for the latest stable release of NRPE at the NRPE downloads page. 
+http://www.sourceforge.net/projects/nagios/files/nrpe-2.x/
+
+#Steps:
+tar xvzf nrpe-2.12.tar.gz
+cd nrpe-2.12
+./configure --with-ssl=/usr/bin/openssl --with-ssl-lib=/usr/lib/x86_64-linux-gnu
+I found the dir through:
+apt-file search libssl | grep libssl-dev
+
+#make all
+#make install-plugin
+
+
+
+
+On Remote Machine (Machine to be monitored)
+
+1]
+#Install Nagios NrpeServer
+apt-get install -y  nagios-nrpe-server nagios-plugins-basic \
+nagios-plugins \
+nagios-plugins-extra
+
+#Edit thr file /etc/nagios/nrpe.cfg
+#Add the Nagios Server IP to the allowed_host parameter
+allowed_hosts=Nagios_serverIP
+#Restart the nrpe server
+service nagios-nrpe-server restart
+
+
+
+######OPTIONAL [ON REMOTE MACHINE]
+5] 
+Writing Custom Plugin for Nagios
+Note: all the below activities will be performed on Remote client Machine
+1> Create your Bash Script and place it to nagios default plugin location "/usr/lib/nagios/plugins/" (not necessery)
+E.g Custom plugin to check disk space
+ 
+#!/bin/bash
+used_space=`df -h / | grep -v Filesystem | awk '{print $5}' | sed 's/%//g'`
+case $used_space in
+[1-84]*)
+echo "OK - $used_space% of disk space used."
+exit 0
+;;
+[85]*)
+echo "WARNING - $used_space% of disk space used."
+exit 1
+;;
+[86-100]*)
+echo "CRITICAL - $used_space% of disk space used."
+exit 2
+;;
+*)
+echo "UNKNOWN - $used_space% of disk space used."
+exit 3
+;;
+esac
+
+let's save it as custom_plugin.sh
+2> chmod +x /usr/lib/nagios/plugins/custom_plugin.sh
+
+3> Nagios Exit Codes
+
+Exit Code	Status
+0	OK
+1	WARNING
+2	CRITICAL
+3	UNKNOWN
+
+4> Add Your Script to NRPE configuration on client host
+Edit /etc/nagios/nrpe.cfg and add the following lines to it:
+
+command[usedspace_bash]=/usr/lib/nagios/plugins/custom_plugin.sh
+
+5> Restart Nagios-Nrpe-Server
+service nagios-nrpe-server restart
+
+ [On Nagios Monitoring Server]
+6> Add Your New Command to Nagios Checks on Nagios Monitoring Server
+Define new command in /etc/nagios/objects/commands.cfg
+
+define command{
+        command_name    usedspace_bash
+        command_line    $USER1$/check_nrpe -H $HOSTADDRESS$ -c usedspace_bash
+        }
+As you can see, it uses NRPE to make TCP connections to port 5666 and run command 'usedspace_bash', which we defined in /etc/nagios/nrpe.cfg on that remote host.
+
+For our example, we will monitor a server called Rajiv-PC and edit /etc/nagios/servers/Rajiv-PC.cfg
+
+define service {
+        use                             generic-service
+        host_name                       Rajiv-PC
+        service_description             check Diskspace
+        check_command                   usedspace_bash
+        }
